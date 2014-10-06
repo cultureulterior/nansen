@@ -1,31 +1,41 @@
-import npyscreen
+import npyscreen,os,json,urllib
+
+class fozz(npyscreen.MLTree):
+    def h_select(self,ch):
+       item = self.values[self.cursor_line]
+       if item.operation:
+       	  os.execl("/usr/bin/ssh","-A","-o","StrictHostKeyChecking=no", item.address, item.operation)
+       else:
+	  os.execl("/usr/bin/ssh","-A","-o","StrictHostKeyChecking=no", item.address)
+
+def consul(c):
+    return json.loads(urllib.urlopen("http://127.0.0.1:8500/v1/"+c).read())
 
 def myFunction(*args):
-    F = npyscreen.Form(name = "Testing Tree class",)
-    wgtree = F.add(npyscreen.MLTree)
-    #wgtree = F.add(npyscreen.MLTreeMultiSelect)
-    
-    treedata = npyscreen.NPSTreeData(content='Root', selectable=True,ignoreRoot=True)
-    c1 = treedata.newChild(content='Child 1', selectable=True, selected=True)
-    c2 = treedata.newChild(content='Child 2', selectable=True)
-    g1 = c1.newChild(content='Grand-child 1', selectable=True)
-    g2 = c1.newChild(content='Grand-child 2', selectable=True)
+    env = open('/etc/banco_environment').read()
+    treedata = npyscreen.NPSTreeData(content=env, selectable=True, selected=True, ignoreRoot=False)
+    cats = [consul("catalog/service/"+k) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
+    ssh = consul("catalog/service/ssh")
+    addresses = dict([(host['Node'],host['Address']) for host in ssh])
+    hosts = dict([(host['Node'],[]) for host in ssh])
+    dockers = [serv['ServiceID'].split(":")[0:2]+[serv["ServiceName"]] for serv in sum(cats,[])]
+    types=dict()
+    for (k,v,t) in dockers:
+        hosts[k].append(v)
+	types[v]=t
+    for k,v in hosts.items():
+        branch = treedata.newChild(content=k, selectable=True)
+	branch.operation = False
+	branch.address = addresses[k]
+        for i in v:
+            leaf = branch.newChild(content=types[i], selectable=True)
+	    leaf.operation = "/usr/local/bin/docker-enter "+i
+	    leaf.address = addresses[k]
+    F = npyscreen.FormBaseNew(name = "Testing Tree class")
+    wgtree = F.add(fozz)
     wgtree.values = treedata
-    F.edit()
-
-    #global RETURN
-    #RETURN = wgtree.values
-    #RETURN = wgtree.get_selected_objects()
-    #F.add(npyscreen.TitleText, name="First Widget")
-    #F.edit()
-
-class RecordList(npyscreen.MultiLineAction):
-    def actionHighlighted(self, act_on_this, keypress):
-        exit(0)
-
-class ClassList(npyscreen.NPSTreeData):
-    pass
+    F.edit()    
 
 if __name__ == '__main__':
     npyscreen.wrapper_basic(myFunction)
-    print "Blink and you missed it!"
+
