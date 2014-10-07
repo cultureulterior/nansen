@@ -1,41 +1,59 @@
 import npyscreen,os,json,urllib
 
-class fozz(npyscreen.MLTree):
-    def h_select(self,ch):
-       item = self.values[self.cursor_line]
-       if item.operation:
-       	  os.execl("/usr/bin/ssh","-A","-o","StrictHostKeyChecking=no", item.address, item.operation)
-       else:
-	  os.execl("/usr/bin/ssh","-A","-o","StrictHostKeyChecking=no", item.address)
+execl = []
 
 def consul(c):
     return json.loads(urllib.urlopen("http://127.0.0.1:8500/v1/"+c).read())
 
-def myFunction(*args):
-    env = open('/etc/banco_environment').read()
-    treedata = npyscreen.NPSTreeData(content=env, selectable=True, selected=True, ignoreRoot=False)
-    cats = [consul("catalog/service/"+k) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
-    ssh = consul("catalog/service/ssh")
-    addresses = dict([(host['Node'],host['Address']) for host in ssh])
-    hosts = dict([(host['Node'],[]) for host in ssh])
-    dockers = [serv['ServiceID'].split(":")[0:2]+[serv["ServiceName"]] for serv in sum(cats,[])]
-    types=dict()
-    for (k,v,t) in dockers:
-        hosts[k].append(v)
-	types[v]=t
-    for k,v in hosts.items():
-        branch = treedata.newChild(content=k, selectable=True)
-	branch.operation = False
-	branch.address = addresses[k]
-        for i in v:
-            leaf = branch.newChild(content=types[i], selectable=True)
-	    leaf.operation = "/usr/local/bin/docker-enter "+i
-	    leaf.address = addresses[k]
-    F = npyscreen.FormBaseNew(name = "Testing Tree class")
-    wgtree = F.add(fozz)
-    wgtree.values = treedata
-    F.edit()    
+class fozz(npyscreen.MLTree):
+    def h_select(self,ch):
+       item = self.values[self.cursor_line]       
+       global execl
+       if item.operation:
+          execl = ["/usr/bin/ssh","-t","-A","-o","StrictHostKeyChecking=no", item.address, item.operation]
+       else:
+          execl = ["/usr/bin/ssh","-t","-A","-o","StrictHostKeyChecking=no", item.address]
+       self.parentForm.parentApp.switchForm(None)
+
+class BaseTreeForm(npyscreen.FormBaseNew):
+      def create(self):
+        env = consul("agent/self")["Config"]["Datacenter"]
+    	treedata = npyscreen.NPSTreeData(content=env, selectable=True, selected=True, ignoreRoot=False)
+    	cats = [consul("catalog/service/"+k) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
+    	ssh  = consul("catalog/service/ssh")
+    	addresses = dict([(host['Node'],host['Address']) for host in ssh])
+    	hosts = dict([(host['Node'],[]) for host in ssh])
+    	dockers = [serv['ServiceID'].split(":")[0:2]+[serv["ServiceName"]] for serv in sum(cats,[])]
+    	types=dict()
+    	for (k,v,t) in dockers:
+            hosts[k].append(v)
+	    types[v]=t
+    	for k,v in hosts.items():
+            branch = treedata.newChild(content=k, selectable=True)
+	    branch.operation = False
+	    branch.address = addresses[k]
+            for i in v:
+            	leaf = branch.newChild(content=types[i], selectable=True)
+	    	leaf.operation = "/usr/bin/sudo /usr/bin/docker-enter "+i
+	    	leaf.address = addresses[k]
+        wgtree = self.add(fozz)
+	wgtree.parentForm = self
+        wgtree.values = treedata
+      
+
+class MyTestApp(npyscreen.NPSAppManaged):
+    def onStart(self):
+        self.addForm("MAIN", BaseTreeForm, name="Screen 1", color="IMPORTANT",)
+
+    def onCleanExit(self):
+	pass
+   
+    def change_form(self, name):
+        self.switchForm(name)
+
 
 if __name__ == '__main__':
-    npyscreen.wrapper_basic(myFunction)
-
+   TA = MyTestApp()
+   TA.run()
+   if len(execl) > 0:
+      os.execl(*execl)
