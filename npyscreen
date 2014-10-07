@@ -1,4 +1,4 @@
-import npyscreen,os,json,urllib
+import npyscreen,subprocess,json,urllib
 
 execl = []
 
@@ -18,35 +18,35 @@ class fozz(npyscreen.MLTree):
 class BaseTreeForm(npyscreen.FormBaseNew):
       def create(self):
         env = consul("agent/self")["Config"]["Datacenter"]
-    	treedata = npyscreen.NPSTreeData(content=env, selectable=True, selected=True, ignoreRoot=False)
-    	cats = [consul("catalog/service/"+k) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
-    	ssh  = consul("catalog/service/ssh")
-    	addresses = dict([(host['Node'],host['Address']) for host in ssh])
-    	hosts = dict([(host['Node'],[]) for host in ssh])
-    	dockers = [serv['ServiceID'].split(":")[0:2]+[serv["ServiceName"]] for serv in sum(cats,[])]
-    	types=dict()
-    	for (k,v,t) in dockers:
+        treedata = npyscreen.NPSTreeData(content=("In the "+env+" dc:"), selectable=True, selected=True, ignoreRoot=False)
+        cats = [consul("catalog/service/"+k) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
+        ssh  = consul("catalog/service/ssh")
+        addresses = dict([(host['Node'],host['Address']) for host in ssh])
+        hosts = dict([(host['Node'],[]) for host in ssh])
+        dockers = [serv['ServiceID'].split(":")[0:2]+[serv["ServiceName"]] for serv in sum(cats,[])]
+        types=dict()
+        for (k,v,t) in dockers:
             hosts[k].append(v)
-	    types[v]=t
-    	for k,v in hosts.items():
+            types[v]=t
+        for k,v in hosts.items():
             branch = treedata.newChild(content=k, selectable=True)
-	    branch.operation = False
-	    branch.address = addresses[k]
+            branch.operation = False
+            branch.address = addresses[k]
             for i in v:
-            	leaf = branch.newChild(content=types[i], selectable=True)
-	    	leaf.operation = "/usr/bin/sudo /usr/bin/docker-enter "+i
-	    	leaf.address = addresses[k]
+                leaf = branch.newChild(content=types[i], selectable=True)
+                leaf.operation = "/usr/bin/sudo /usr/bin/docker-enter "+i
+                leaf.address = addresses[k]
         wgtree = self.add(fozz)
-	wgtree.parentForm = self
+        wgtree.parentForm = self
         wgtree.values = treedata
       
 
 class MyTestApp(npyscreen.NPSAppManaged):
     def onStart(self):
-        self.addForm("MAIN", BaseTreeForm, name="Screen 1", color="IMPORTANT",)
+        self.addForm("MAIN", BaseTreeForm, framed=False, max_height=15)
 
     def onCleanExit(self):
-	pass
+        pass
    
     def change_form(self, name):
         self.switchForm(name)
@@ -56,4 +56,4 @@ if __name__ == '__main__':
    TA = MyTestApp()
    TA.run()
    if len(execl) > 0:
-      os.execl(*execl)
+      subprocess.call(execl)
