@@ -6,7 +6,7 @@ execl = []
 def consul(c):
     return json.loads(urllib.urlopen("http://127.0.0.1:8500/v1/"+c).read())
 
-class fozz(npyscreen.MLTree):
+class ContainerTree(npyscreen.MLTree):
     def h_select(self,ch):
        item = self.values[self.cursor_line]       
        global execl
@@ -37,12 +37,12 @@ class BaseTreeForm(npyscreen.FormBaseNew):
                 leaf = branch.newChild(content=types[i], selectable=True)
                 leaf.operation = "/usr/bin/sudo /usr/bin/docker-enter "+i
                 leaf.address = addresses[k]
-        wgtree = self.add(fozz)
+        wgtree = self.add(ContainerTree)
         wgtree.parentForm = self
         wgtree.values = treedata
       
 
-class MyTestApp(npyscreen.NPSAppManaged):
+class ContainerTreeApp(npyscreen.NPSAppManaged):
     def onStart(self):
         self.addForm("MAIN", BaseTreeForm, framed=False, max_height=15)
 
@@ -54,7 +54,7 @@ class MyTestApp(npyscreen.NPSAppManaged):
 
 
 if __name__ == '__main__':
-   TA = MyTestApp()
+   TA = ContainerTreeApp()
    TA.run()
    if len(execl) > 0:
       subprocess.call(execl)
