@@ -1,10 +1,14 @@
 #!/usr/bin/python
-import npyscreen,subprocess,json,urllib
+import npyscreen,subprocess,json,urllib,os,sys
 
-execl = []
+def consul(query):    
+    consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
+    return json.loads(urllib.urlopen("http://%(consul_host)s:8500/v1/%(query)s" % locals()).read())
 
-def consul(c):
-    return json.loads(urllib.urlopen("http://127.0.0.1:8500/v1/"+c).read())
+def matches(server):
+    if len(sys.argv) > 1:
+        return (server in sys.argv[1])
+    return True
 
 class ContainerTree(npyscreen.MLTree):
     def h_select(self,ch):
@@ -23,7 +27,7 @@ class BaseTreeForm(npyscreen.FormBaseNew):
         cats = [consul("catalog/service/"+k) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
         ssh  = consul("catalog/service/ssh")
         addresses = dict([(host['Node'],host['Address']) for host in ssh])
-        hosts = dict([(host['Node'],[]) for host in ssh])
+        hosts = dict([(host['Node'],[]) for host in ssh if matches(host)])
         dockers = [serv['ServiceID'].split(":")[0:2]+[serv["ServiceName"]] for serv in sum(cats,[])]
         types=dict()
         for (k,v,t) in dockers:
@@ -53,8 +57,18 @@ class ContainerTreeApp(npyscreen.NPSAppManaged):
         self.switchForm(name)
 
 
+def main():
+   try:
+       if len(consul("catalog/service/ssh")) < 1:
+           print "No ssh service in consul, try the included ssh.json"
+   except IOError:
+       consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
+       print "Error connecting to consul (%(consul_host)s:8500)" % locals()
+   else:
+       TA = ContainerTreeApp()
+       TA.run()
+       if len(execl) > 0:
+           subprocess.call(execl)
+
 if __name__ == '__main__':
-   TA = ContainerTreeApp()
-   TA.run()
-   if len(execl) > 0:
-      subprocess.call(execl)
+    main()
