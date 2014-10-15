@@ -68,6 +68,7 @@ def main():
        TA = ContainerTreeApp()
        TA.run()
        if len(execl) > 0:
+           print " ".join(execl)
            subprocess.call(execl)
 
 if __name__ == '__main__':
