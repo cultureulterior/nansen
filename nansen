@@ -14,10 +14,11 @@ class ContainerTree(npyscreen.MLTree):
     def h_select(self,ch):
        item = self.values[self.cursor_line]       
        global execl
+       ssh_opts = [i for i in os.getenv('SSH_OPTS', "").split(" ") if len(i)>0]
        if item.operation:
-          execl = ["/usr/bin/ssh","-t","-A","-o","StrictHostKeyChecking=no", item.address, item.operation]
+          execl = ["/usr/bin/ssh","-t","-A","-o","StrictHostKeyChecking=no"]+ssh_opts+[ item.address, item.operation]
        else:
-          execl = ["/usr/bin/ssh","-t","-A","-o","StrictHostKeyChecking=no", item.address]
+          execl = ["/usr/bin/ssh","-t","-A","-o","StrictHostKeyChecking=no"]+ssh_opts+[ item.address]
        self.parentForm.parentApp.switchForm(None)
 
 class BaseTreeForm(npyscreen.FormBaseNew):
