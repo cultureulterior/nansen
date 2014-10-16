@@ -7,8 +7,14 @@ def consul(query):
 
 def matches(server):
     if len(sys.argv) > 1:
-        return (server in sys.argv[1])
+        return (sys.argv[1] in server)
     return True
+
+def ops(i):
+    if len(sys.argv) > 2:
+        return "/usr/bin/sudo /usr/bin/docker-enter %s %s" % (i,sys.argv[2])
+    else:
+        return "/usr/bin/sudo /usr/bin/docker-enter %s" % i
 
 class ContainerTree(npyscreen.MLTree):
     def h_select(self,ch):
@@ -24,23 +30,26 @@ class ContainerTree(npyscreen.MLTree):
 class BaseTreeForm(npyscreen.FormBaseNew):
       def create(self):
         env = consul("agent/self")["Config"]["Datacenter"]
-        treedata = npyscreen.NPSTreeData(content=("In the "+env+" dc:"), selectable=True, selected=True, ignoreRoot=False)
+        title = "In the "+env+" dc:"
         cats = [consul("catalog/service/"+k) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
         ssh  = consul("catalog/service/ssh")
         addresses = dict([(host['Node'],host['Address']) for host in ssh])
-        hosts = dict([(host['Node'],[]) for host in ssh if matches(host)])
+        hosts = dict([(host['Node'],[]) for host in ssh if matches(host['Node'])])
+        #title = ssh[0]
         dockers = [serv['ServiceID'].split(":")[0:2]+[serv["ServiceName"]] for serv in sum(cats,[])]
         types=dict()
         for (k,v,t) in dockers:
-            hosts[k].append(v)
-            types[v]=t
+            if k in hosts:
+                hosts[k].append(v)
+                types[v]=t
+        treedata = npyscreen.NPSTreeData(content=title, selectable=True, selected=True, ignoreRoot=False)
         for k,v in hosts.items():
             branch = treedata.newChild(content=k, selectable=True)
             branch.operation = False
             branch.address = addresses[k]
             for i in v:
                 leaf = branch.newChild(content=types[i], selectable=True)
-                leaf.operation = "/usr/bin/sudo /usr/bin/docker-enter "+i
+                leaf.operation = ops(i)
                 leaf.address = addresses[k]
         wgtree = self.add(ContainerTree)
         wgtree.parentForm = self
