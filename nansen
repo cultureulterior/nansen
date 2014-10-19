@@ -1,7 +1,7 @@
 #!/usr/bin/python
 import npyscreen,subprocess,json,urllib,os,sys
 
-def consul(query):    
+def consul(query):
     consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
     return json.loads(urllib.urlopen("http://%(consul_host)s:8500/v1/%(query)s" % locals()).read())
 
@@ -18,7 +18,7 @@ def ops(i):
 
 class ContainerTree(npyscreen.MLTree):
     def h_select(self,ch):
-       item = self.values[self.cursor_line]       
+       item = self.values[self.cursor_line]
        global execl
        ssh_opts = [i for i in os.getenv('SSH_OPTS', "").split(" ") if len(i)>0]
        if item.operation:
@@ -43,18 +43,17 @@ class BaseTreeForm(npyscreen.FormBaseNew):
                 hosts[k].append(v)
                 types[v]=t
         treedata = npyscreen.NPSTreeData(content=title, selectable=True, selected=True, ignoreRoot=False)
-        for k,v in hosts.items():
+        for k,v in sorted(hosts.items()):
             branch = treedata.newChild(content=k, selectable=True)
             branch.operation = False
             branch.address = addresses[k]
-            for i in v:
+            for i in sorted(v):
                 leaf = branch.newChild(content=types[i], selectable=True)
                 leaf.operation = ops(i)
                 leaf.address = addresses[k]
         wgtree = self.add(ContainerTree)
         wgtree.parentForm = self
         wgtree.values = treedata
-      
 
 class ContainerTreeApp(npyscreen.NPSAppManaged):
     def onStart(self):
@@ -62,7 +61,7 @@ class ContainerTreeApp(npyscreen.NPSAppManaged):
 
     def onCleanExit(self):
         pass
-   
+
     def change_form(self, name):
         self.switchForm(name)
 
@@ -79,6 +78,7 @@ def main():
        TA.run()
        if len(execl) > 0:
            print " ".join(execl)
+           sys.stdout.flush()
            subprocess.call(execl)
 
 if __name__ == '__main__':
