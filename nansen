@@ -17,6 +17,10 @@ def ops(i):
         return "/usr/bin/sudo /usr/bin/docker-enter %s" % i
 
 class ContainerTree(npyscreen.MLTree):
+    def handle_mouse_event(self,m):
+        super(ContainerTree,self).handle_mouse_event(m)
+        self.h_select(m)
+
     def h_select(self,ch):
        item = self.values[self.cursor_line]
        global execl
