@@ -22,6 +22,8 @@ class ContainerTree(npyscreen.MLTree):
         self.h_select(m)
 
     def h_select(self,ch):
+       if self.cursor_line==0:
+           return
        item = self.values[self.cursor_line]
        global execl
        ssh_opts = [i for i in os.getenv('SSH_OPTS', "").split(" ") if len(i)>0]
@@ -74,16 +76,19 @@ def main():
    try:
        if len(consul("catalog/service/ssh")) < 1:
            print "No ssh service in consul, try the included ssh.json"
-   except IOError:
-       consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
-       print "Error connecting to consul (%(consul_host)s:8500)" % locals()
-   else:
        TA = ContainerTreeApp()
        TA.run()
        if len(execl) > 0:
            print " ".join(execl)
            sys.stdout.flush()
            subprocess.call(execl)
+   except KeyboardInterrupt:
+       print "Ctrl-c"
+   except IOError:
+       consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
+       print "Error connecting to consul (%(consul_host)s:8500)" % locals()
+
+
 
 if __name__ == '__main__':
     main()
