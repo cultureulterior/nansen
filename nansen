@@ -37,12 +37,12 @@ class BaseTreeForm(npyscreen.FormBaseNew):
       def create(self):
         env = consul("agent/self")["Config"]["Datacenter"]
         title = "In the "+env+" dc:"
-        cats = [consul("catalog/service/"+k) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
-        ssh  = consul("catalog/service/ssh")
-        addresses = dict([(host['Node'],host['Address']) for host in ssh])
-        hosts = dict([(host['Node'],[]) for host in ssh if matches(host['Node'])])
+        cats = [consul("health/service/"+k+"?passing=true") for (k,v) in consul("catalog/services").items() if 'registrator' in v]
+        ssh  = consul("health/service/ssh?passing=true")
+        addresses = dict([(host['Node']['Node'],host['Node']['Address']) for host in ssh])
+        hosts = dict([(host['Node']['Node'],[]) for host in ssh if matches(host['Node']['Node'])])
         #title = ssh[0]
-        dockers = [serv['ServiceID'].split(":")[0:2]+[serv["ServiceName"]] for serv in sum(cats,[])]
+        dockers = [serv['Service']['ID'].split(":")[0:2]+[serv["Service"]["Service"]] for serv in sum(cats,[])]
         types=dict()
         for (k,v,t) in dockers:
             if k in hosts:
