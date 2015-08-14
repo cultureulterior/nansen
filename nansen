@@ -1,9 +1,27 @@
 #!/usr/bin/python
-import npyscreen,subprocess,json,urllib,os,sys
+import npyscreen,subprocess,json,urllib2,os,sys,socket,threading,time,Queue
+
+def consuldata(query):
+    consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
+    try:
+        response = urllib2.urlopen("http://%(consul_host)s:8500/v1/%(query)s" % locals(),timeout = 1)
+        return (json.loads(response.read()),response.info().getheader('X-Consul-Index'))
+    except socket.timeout, e:
+        # For Python 2.7
+        raise Exception("There was an error connecting to consul: %r" % e)
 
 def consul(query):
-    consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
-    return json.loads(urllib.urlopen("http://%(consul_host)s:8500/v1/%(query)s" % locals()).read())
+    return consuldata(query)[0]
+
+def consulgenerator(query):
+    data,index = consuldata(query)
+    yield data,index
+    while True:
+        if "?" in query:
+            data,index = consuldata("%s&index=%s" % (query,index))
+        else:
+            data,index = consuldata("%s?index=%s" % (query,index))
+        yield data,index
 
 def matches(server):
     if len(sys.argv) > 1:
@@ -36,7 +54,7 @@ class ContainerTree(npyscreen.MLTree):
 class BaseTreeForm(npyscreen.FormBaseNew):
       def create(self):
         env = consul("agent/self")["Config"]["Datacenter"]
-        title = "In the "+env+" dc:"
+        title = "In the "+env+" dc: (updated at "+time.ctime()+")"
         cats = [consul("health/service/"+k+"?passing=true") for (k,v) in consul("catalog/services").items() if 'registrator' in v]
         ssh  = consul("health/service/ssh?passing=true")
         addresses = dict([(host['Node']['Node'],host['Node']['Address']) for host in ssh])
@@ -60,10 +78,28 @@ class BaseTreeForm(npyscreen.FormBaseNew):
         wgtree = self.add(ContainerTree)
         wgtree.parentForm = self
         wgtree.values = treedata
+        self.wgtree=wgtree
 
-class ContainerTreeApp(npyscreen.NPSAppManaged):
+
+class ContainerTreeApp(npyscreen.StandardApp):    
+    def while_waiting(self):
+        self.queue_event(npyscreen.Event("REFRESH")) 
+
+    def worker():
+        ssh = consul("catalog/services")
+        for _,index in consulgenerator():
+            self.q.put(index)
+
     def onStart(self):
+        self.q = Queue.Queue()
+        self.t = threading.Thread(target=ContainerTreeApp.worker)
+        self.add_event_hander("REFRESH", self.refresh) 
         self.addForm("MAIN", BaseTreeForm, framed=False, max_height=15)
+        
+    def refresh(self, event):        
+        self.addForm("MAIN", BaseTreeForm, framed=False, max_height=15)
+        self.switchForm("MAIN")
+        self.resetHistory()
 
     def onCleanExit(self):
         pass
