@@ -1,27 +1,36 @@
 #!/usr/bin/python
-import npyscreen,subprocess,json,urllib2,os,sys,socket,threading,time,Queue
+import npyscreen,subprocess,json,urllib2,os,sys,socket,threading,time,Queue,thread,logging
+logfile = "nansen.log" if "-d" in sys.argv else "/dev/null"
+logging.basicConfig(filename=logfile,level=logging.DEBUG)
+logging.debug("starting")
 
-def consuldata(query):
+def consuldata(query,timeout=1,timeoutok=False):
     consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
     try:
-        response = urllib2.urlopen("http://%(consul_host)s:8500/v1/%(query)s" % locals(),timeout = 1)
+        response = urllib2.urlopen("http://%(consul_host)s:8500/v1/%(query)s" % locals(),timeout = timeout)
         return (json.loads(response.read()),response.info().getheader('X-Consul-Index'))
-    except socket.timeout, e:
+    except socket.timeout as e:
         # For Python 2.7
-        raise Exception("There was an error connecting to consul: %r" % e)
+        if not timeoutok:
+            raise Exception("There was an error connecting to consul: %r" % e)
 
 def consul(query):
     return consuldata(query)[0]
 
 def consulgenerator(query):
-    data,index = consuldata(query)
-    yield data,index
-    while True:
-        if "?" in query:
-            data,index = consuldata("%s&index=%s" % (query,index))
-        else:
-            data,index = consuldata("%s?index=%s" % (query,index))
+    try:
+        data,index = consuldata(query)
+        logging.debug("got first")
         yield data,index
+        while True:            
+            if "?" in query:
+                data,index = consuldata("%s&wait=30s&index=%s" % (query,index),timeout=31,timeoutok=True)
+            else:
+                data,index = consuldata("%s?wait=30s&index=%s" % (query,index),timeout=31,timeoutok=True)
+            logging.debug("got again")
+            yield data,index
+    except Exception as ex:
+        logging.error("failed "+str(ex))
 
 def matches(server):
     if len(sys.argv) > 1:
@@ -52,9 +61,13 @@ class ContainerTree(npyscreen.MLTree):
        self.parentForm.parentApp.switchForm(None)
 
 class BaseTreeForm(npyscreen.FormBaseNew):
+      def __init__(self,*args,**bargs):
+        self.age=bargs["age"]
+        super(BaseTreeForm, self).__init__(*args,**bargs)
+    
       def create(self):
         env = consul("agent/self")["Config"]["Datacenter"]
-        title = "In the "+env+" dc: (updated at "+time.ctime()+")"
+        title = "In the "+env+" dc: (updated at "+time.ctime()+")"+str(self.age)
         cats = [consul("health/service/"+k+"?passing=true") for (k,v) in consul("catalog/services").items() if 'registrator' in v]
         ssh  = consul("health/service/ssh?passing=true")
         addresses = dict([(host['Node']['Node'],host['Node']['Address']) for host in ssh])
@@ -80,24 +93,28 @@ class BaseTreeForm(npyscreen.FormBaseNew):
         wgtree.values = treedata
         self.wgtree=wgtree
 
+class WaitForm(npyscreen.Form):
+    def create(self):
+        self.add(npyscreen.TitleText, name = "Waiting:", value= "Waiting for data" )
 
 class ContainerTreeApp(npyscreen.StandardApp):    
-    def while_waiting(self):
-        self.queue_event(npyscreen.Event("REFRESH")) 
-
-    def worker():
-        ssh = consul("catalog/services")
-        for _,index in consulgenerator():
-            self.q.put(index)
+    @staticmethod
+    def worker(self):
+        logging.debug("started worker")
+        for _,index in consulgenerator("catalog/services"):
+            logging.debug("got "+str(index))
+            self.queue_event(npyscreen.Event("REFRESH",index)) 
 
     def onStart(self):
-        self.q = Queue.Queue()
-        self.t = threading.Thread(target=ContainerTreeApp.worker)
+        logging.debug("starting"+str(ContainerTreeApp.worker))
+        self.t = thread.start_new_thread(ContainerTreeApp.worker,(self,))
         self.add_event_hander("REFRESH", self.refresh) 
-        self.addForm("MAIN", BaseTreeForm, framed=False, max_height=15)
+        self.addForm("MAIN", WaitForm, framed=False)
+        #self.addForm("MAIN", BaseTreeForm, framed=False, age="0")
         
-    def refresh(self, event):        
-        self.addForm("MAIN", BaseTreeForm, framed=False, max_height=15)
+    def refresh(self, event):
+        logging.debug("runnning refresh with"+str(event.payload))
+        self.addForm("MAIN", BaseTreeForm, framed=False, age=event.payload)
         self.switchForm("MAIN")
         self.resetHistory()
 
@@ -114,6 +131,7 @@ def main():
            print "No ssh service in consul, try the included ssh.json"
        TA = ContainerTreeApp()
        TA.run()
+       logging.debug("executing"+execl)
        if len(execl) > 0:
            print " ".join(execl)
            sys.stdout.flush()
