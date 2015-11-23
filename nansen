@@ -35,9 +35,12 @@ class ContainerTree(npyscreen.MLTree):
 
 class BaseTreeForm(npyscreen.FormBaseNew):
       def create(self):
+        consul_tag = os.getenv('CONSUL_TAG')
+        tag_param = tag_param = "&tag="+consul_tag if consul_tag else ""
         env = consul("agent/self")["Config"]["Datacenter"]
-        title = "In the "+env+" dc:"
-        cats = [consul("health/service/"+k+"?passing=true") for (k,v) in consul("catalog/services").items() if 'registrator' in v]
+        tag_name = "(with tag "+consul_tag + ")" if consul_tag else ""
+        title = "In the "+env+" dc" + tag_name + ":"
+        cats = [consul("health/service/"+k+"?passing=true"+tag_param) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
         ssh  = consul("health/service/ssh?passing=true")
         addresses = dict([(host['Node']['Node'],host['Node']['Address']) for host in ssh])
         hosts = dict([(host['Node']['Node'],[]) for host in ssh if matches(host['Node']['Node'])])
