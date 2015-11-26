@@ -11,10 +11,11 @@ def matches(server):
     return True
 
 def ops(i):
+    enter = os.getenv('NANSEN_ENTER_COMMAND', "/usr/bin/sudo /usr/bin/docker-enter")
     if len(sys.argv) > 2:
-        return "/usr/bin/sudo /usr/bin/docker-enter %s %s" % (i,sys.argv[2])
+        return "%s %s %s" % (enter,i,sys.argv[2])
     else:
-        return "/usr/bin/sudo /usr/bin/docker-enter %s" % i
+        return "%s %s" % (enter,i)
 
 class ContainerTree(npyscreen.MLTree):
     def handle_mouse_event(self,m):
