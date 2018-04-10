@@ -1,71 +1,106 @@
 #!/usr/bin/python
-import npyscreen,subprocess,json,urllib,os,sys
+import npyscreen,subprocess,json,os,sys,boto3,time,copy,argparse,re
+from threading import Thread
+from itertools import chain,islice
 
-def consul(query):
-    consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
-    return json.loads(urllib.urlopen("http://%(consul_host)s:8500/v1/%(query)s" % locals()).read())
 
-def matches(server):
-    if len(sys.argv) > 1:
-        return (sys.argv[1] in server)
-    return True
 
-def ops(i):
-    enter = os.getenv('NANSEN_ENTER_COMMAND', "/usr/bin/sudo /usr/bin/docker-enter")
-    if len(sys.argv) > 2:
-        return "%s %s %s" % (enter,i,sys.argv[2])
+def ip(item):
+    if "containerInstance" in item:
+        item["instance"] = client.describe_container_instances(cluster = item["cluster"], containerInstances = [item["containerInstance"]])['containerInstances'][0]['ec2InstanceId']
+    if "instance" in item:        
+        return str(ec2.describe_instances(InstanceIds=[item["instance"]])['Reservations'][0]['Instances'][0]['PrivateIpAddress'])
     else:
-        return "%s %s" % (enter,i)
+        return str(item)
+
+def container(item):
+    if "name" in item:
+        return item['name']
+    else:
+        return None
+
+def arnclean():
+    i.split("/",1)[1]
 
 class ContainerTree(npyscreen.MLTree):
     def handle_mouse_event(self,m):
+        self.never_cache=True
         super(ContainerTree,self).handle_mouse_event(m)
         self.h_select(m)
-
+        
     def h_select(self,ch):
-       if self.cursor_line==0:
-           return
-       item = self.values[self.cursor_line]
-       global execl
-       ssh_opts = [i for i in os.getenv('SSH_OPTS', "").split(" ") if len(i)>0]
-       if item.operation:
-          execl = ["/usr/bin/ssh","-t","-A","-o","StrictHostKeyChecking=no"]+ssh_opts+[ item.address, item.operation]
-       else:
-          execl = ["/usr/bin/ssh","-t","-A","-o","StrictHostKeyChecking=no"]+ssh_opts+[ item.address]
-       self.parentForm.parentApp.switchForm(None)
+        if self.cursor_line==0:
+            return
+        item = self.values[self.cursor_line]
+        global execl
+        if os.getenv('SSH_OPTS'):
+            ssh_opts = [i for i in os.getenv('SSH_OPTS', "").split(" ") if len(i)>0]
+        else:
+            ssh_opts = ["-t","-A","-o","StrictHostKeyChecking=no","-l","ec2-user"]
+        i=ip(item.address)
+        cont=container(item.address)
+        if cont:
+            execl = ["/usr/bin/ssh"]+ssh_opts+[ i, "docker exec -it " + cont ]
+        else:
+            execl = ["/usr/bin/ssh"]+ssh_opts+[ i ]
+        self.parentForm.parentApp.switchForm(None)
 
-class BaseTreeForm(npyscreen.FormBaseNew):
-      def create(self):
-        consul_tag = os.getenv('CONSUL_TAG')
-        tag_param = tag_param = "&tag="+consul_tag if consul_tag else ""
-        env = consul("agent/self")["Config"]["Datacenter"]
-        tag_name = "(with tag "+consul_tag + ")" if consul_tag else ""
-        title = "In the "+env+" dc" + tag_name + ":"
-        cats = [consul("health/service/"+k+"?passing=true"+tag_param) for (k,v) in consul("catalog/services").items() if 'registrator' in v]
-        ssh  = consul("health/service/ssh?passing=true")
-        addresses = dict([(host['Node']['Node'],host['Node']['Address']) for host in ssh])
-        hosts = dict([(host['Node']['Node'],[]) for host in ssh if matches(host['Node']['Node'])])
-        #title = ssh[0]
-        dockers = [serv['Service']['ID'].split(":")[0:2]+[serv["Service"]["Service"]] for serv in sum(cats,[])]
-        types=dict()
-        for (k,v,t) in dockers:
-            if k in hosts:
-                hosts[k].append(v)
-                types[v]=t
-        treedata = npyscreen.NPSTreeData(content=title, selectable=True, selected=True, ignoreRoot=False)
-        for k,v in sorted(hosts.items()):
-            branch = treedata.newChild(content=k, selectable=True)
-            branch.operation = False
-            branch.address = addresses[k]
-            for i in sorted(v):
-                leaf = branch.newChild(content=types[i], selectable=True)
-                leaf.operation = ops(i)
-                leaf.address = addresses[k]
+class BaseTreeForm(npyscreen.Form):
+    def create(self):
+        services_first = False
+        title="ECS"
+        treedata = npyscreen.TreeData(content=title, selectable=True, selected=True, ignore_root=False)
+        self.treedata = treedata
+        self.add_event_hander("INSERT", self.ev_insert_handler)
+        self.add_event_hander("DELETE", self.ev_delete_handler)
+        self.add_event_hander("UPDATE", self.ev_update_handler)
         wgtree = self.add(ContainerTree)
+        self.wgtree=wgtree
         wgtree.parentForm = self
         wgtree.values = treedata
 
-class ContainerTreeApp(npyscreen.NPSAppManaged):
+    def insert(self, tree, hier, address):
+        if len(hier) > 0:
+            value = hier.pop(0)
+            children = []
+            for i in tree._children:
+                if i.content == value:
+                    self.insert(i, hier, address)
+                    break
+            else:
+                child = tree.new_child(content = value, selectable = True)
+                child.operation = False
+                child.address = address
+                self.insert(child, hier, address)
+
+    def update(self, tree, hier, address, replace):
+        if len(hier) > 0:
+            value = hier.pop(0)
+            children = []
+            for i in tree._children:
+                if i.content == value:
+                    if len(hier) == 1:
+                        i.operation = False
+                        i.content = replace
+                        i.address = address
+                    else:
+                        self.update(i, hier, address, replace)
+                    break
+
+    def ev_insert_handler(self, event):
+        hier, operation, address = event.payload
+        self.insert(self.treedata, hier, address)
+        self.wgtree.resize()
+
+    def ev_delete_handler(self, event):
+        pass
+
+    def ev_update_handler(self, event):
+        hier, operation, address, replace = event.payload
+        self.update(self.treedata, hier, address, replace)
+        self.wgtree.resize()
+
+class ContainerTreeApp(npyscreen.StandardApp):
     def onStart(self):
         self.addForm("MAIN", BaseTreeForm, framed=False, max_height=15)
 
@@ -75,23 +110,100 @@ class ContainerTreeApp(npyscreen.NPSAppManaged):
     def change_form(self, name):
         self.switchForm(name)
 
+class EventSender(Thread):
+    def __init__(self,seto):
+        super(EventSender, self).__init__()
+        self.seto = seto
+        self.daemon = True
+
+    def insert(self,*data):
+        self.seto.queue_event(npyscreen.Event("INSERT",copy.deepcopy(data)))
+
+    def update(self,*data):
+        self.seto.queue_event(npyscreen.Event("UPDATE",copy.deepcopy(data)))
+        
+    def run(self):
+        al = []
+        vers = {}
+        inst = {}
+        for c in chain.from_iterable(page['clusterArns'] for page in client.get_paginator('list_clusters').paginate()):
+            if args.cluster and re.search(args.cluster,c.split("/",1)[1]) is None:
+                continue
+            al.append(c.split("/",1)[1])
+            self.insert(al,False,False)
+            inst[c]=[]
+            vers[c]={}
+            if args.ec2:
+                for b in chain.from_iterable([i['serviceArns'] for i in client.get_paginator('list_services').paginate(cluster=c)]):
+                    al.append(b.split("/",1)[1])
+                    self.insert(al,False,False)
+                    for l in chain.from_iterable([i['taskArns'] for i in client.get_paginator('list_tasks').paginate(cluster=c,serviceName=b)]):
+                        al.append(l.split("/",1)[1])
+                        vers[c][l]=copy.deepcopy(al)
+                        self.insert(al,False,{"cluster":c,"taskarn":l})
+                        al.pop()
+                    al.pop()
+            else:
+                for b in chain.from_iterable([i['containerInstanceArns'] for i in client.get_paginator('list_container_instances').paginate(cluster=c)]):
+                    al.append(b.split("/",1)[1])
+                    inst[c].append(b)
+                    self.insert(al,False,{"cluster":c,"containerInstance":b})
+                    for l in chain.from_iterable([i['taskArns'] for i in client.get_paginator('list_tasks').paginate(cluster=c,containerInstance=b)]):
+                        al.append(l.split("/",1)[1])
+                        vers[c][l]=copy.deepcopy(al)
+                        self.insert(al,False,{"cluster":c,"containerInstance":b})
+                        al.pop()
+                    al.pop()
+            al.pop()
+        for c,c_v in vers.items():
+            for task in c_v.keys():
+                for t in client.describe_tasks(cluster = c, tasks = [task])['tasks']:
+                    self.update(vers[c][t['taskArn']]+[t['taskArn']],False,{"cluster":c,"containerInstance":t['containerInstanceArn']},t['taskDefinitionArn'].split("/",1)[1])
+                    for ct in t['containers']:
+                        self.insert(vers[c][t['taskArn']]+[ct['name']],False,{"cluster":c,"containerInstance":t['containerInstanceArn'],"name":ct['name']})
+        if not args.ec2:
+            for c,c_i in inst.items():
+                for i in c_i:
+                    for di in client.describe_container_instances(cluster = c, containerInstances = [i])['containerInstances']:
+                        self.update([c.split("/",1)[1],i.split("/",1)[1]],False,{"instance":di['ec2InstanceId']},di['ec2InstanceId'])
+
+
+
 
 def main():
    try:
-       if len(consul("catalog/service/ssh")) < 1:
-           print "No ssh service in consul, try the included ssh.json"
+       parser = argparse.ArgumentParser()
+       parser.add_argument("-C", "--onlyclusters",help="show clusters only", action="store_true")
+       parser.add_argument("-c", "--cluster", type=str, help="show specific cluster only")
+       parser.add_argument("-r", "--region", type=str, help="aws region")
+       parser.add_argument("-p", "--profile", type=str, help="aws profile")
+       parser.add_argument("-e", "--ec2", help="show ec2 instances", action="store_false")
+       parser.add_argument("-t", "--no-show-tasks", help="don't show tasks in branches", action="store_true")
+       parser.add_argument("-s", "--no-show-services", help="don't show services in clusters", action="store_true")
+       parser.add_argument("-i", "--no-show-instances", help="don't show instances in clusters", action="store_true")
+       global args
+       global client
+       global ec2
+       args = parser.parse_args()
+       session = {}
+       if args.profile:
+           session["profile_name"] = args.profile 
+       if args.region:
+           session["region_name"] = args.region
+       if len(session) > 0:
+           boto3.setup_default_session(**session)
+       client = boto3.client('ecs')
+       ec2    = boto3.client('ec2')
        TA = ContainerTreeApp()
+       EV = EventSender(TA)
+       EV.start()
        TA.run()
        if len(execl) > 0:
-           print " ".join(execl)
+           print(" ".join([str(i) for i in execl]))
            sys.stdout.flush()
            subprocess.call(execl)
    except KeyboardInterrupt:
-       print "Ctrl-c"
-   except IOError:
-       consul_host = os.getenv('CONSUL_HOST', "127.0.0.1")
-       print "Error connecting to consul (%(consul_host)s:8500)" % locals()
-
+       print("Ctrl-c")
 
 
 if __name__ == '__main__':

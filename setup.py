@@ -12,7 +12,7 @@ setup(
     description = ("Consul host & docker tree"),
     license = "GPL",
     keywords = "consul docker ssh",
-    install_requires = ['npyscreen'],
+    install_requires = ['npyscreen','boto3'],
     long_description=read('README.md'),
     scripts=['nansen'],
     classifiers=[
