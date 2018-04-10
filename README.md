@@ -3,7 +3,7 @@
 `nansen`
 
 <pre>
-  ┬ In the test dc:
+  ┬ ECS:
   ├─┬ test-5-f6d0fda5
   │ └─  system5
   ├─┬ test-6-c95dfb8b
@@ -17,11 +17,11 @@
 
 To install, run `sudo python setup.py install`
 
-Nansen uses registrator, consul, docker and ssh to display a tree of machines and allow you to ssh (and, if needed, docker-enter), to arrive in any machine or docker in your local consul data center.
+Nansen uses ECS to display a tree of clusters, machines, and tasks and allows you to directly ssh (and, if needed, docker exec), to arrive in any machine or docker in AWS.
 
-To use, you need registrator, and for registrator to have tagged all docker instances with the 'registrator' tag, and have docker-enter on your machines. You will also need to have a ssh service registered in consul. This can be done, for example, with the included file 'util/ssh.json'
+To use, you need to be using ECS
 
-You can also use `nansen <matcher>` to only show some hosts, and `nansen <matcher> <operation>` to perform that operation on the host when selected.  
+You can also use `nansen <matcher>` to only show some hosts clusters, and `nansen <matcher>` to perform that operation on the host when selected.  
 
 
 
