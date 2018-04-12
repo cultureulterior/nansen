@@ -3,9 +3,9 @@ import npyscreen,subprocess,json,os,sys,boto3,time,copy,argparse,re
 from threading import Thread
 from itertools import chain,islice
 
-
-
 def ip(item):
+    if "taskarn" in item:
+        item["containerInstance"]=client.describe_tasks(cluster = item["cluster"], tasks = [item["taskarn"]])['tasks'][0]['containerInstanceArn']
     if "containerInstance" in item:
         item["instance"] = client.describe_container_instances(cluster = item["cluster"], containerInstances = [item["containerInstance"]])['containerInstances'][0]['ec2InstanceId']
     if "instance" in item:        
@@ -14,13 +14,10 @@ def ip(item):
         return str(item)
 
 def container(item):
-    if "name" in item:
-        return item['name']
+    if "taskarn" in item:
+        return item["taskarn"]
     else:
         return None
-
-def arnclean():
-    i.split("/",1)[1]
 
 class ContainerTree(npyscreen.MLTree):
     def handle_mouse_event(self,m):
@@ -32,6 +29,8 @@ class ContainerTree(npyscreen.MLTree):
         if self.cursor_line==0:
             return
         item = self.values[self.cursor_line]
+        if not item.address:
+            return
         global execl
         if os.getenv('SSH_OPTS'):
             ssh_opts = [i for i in os.getenv('SSH_OPTS', "").split(" ") if len(i)>0]
@@ -40,12 +39,12 @@ class ContainerTree(npyscreen.MLTree):
         i=ip(item.address)
         cont=container(item.address)
         if cont:
-            execl = ["/usr/bin/ssh"]+ssh_opts+[ i, "docker exec -it " + cont ]
+            execl = ["/usr/bin/ssh"]+ssh_opts+[ i, "docker exec -it $(docker ps -q -f label=com.amazonaws.ecs.task-arn="+cont+") /bin/sh"]
         else:
             execl = ["/usr/bin/ssh"]+ssh_opts+[ i ]
         self.parentForm.parentApp.switchForm(None)
 
-class BaseTreeForm(npyscreen.Form):
+class BaseTreeForm(npyscreen.FormBaseNew):
     def create(self):
         services_first = False
         title="ECS"
@@ -100,6 +99,7 @@ class BaseTreeForm(npyscreen.Form):
         self.update(self.treedata, hier, address, replace)
         self.wgtree.resize()
 
+
 class ContainerTreeApp(npyscreen.StandardApp):
     def onStart(self):
         self.addForm("MAIN", BaseTreeForm, framed=False, max_height=15)
@@ -110,6 +110,12 @@ class ContainerTreeApp(npyscreen.StandardApp):
     def change_form(self, name):
         self.switchForm(name)
 
+def cl(i):
+    return i.split("/",1)[1]
+
+def boit(arnname,command,**args):
+    return chain.from_iterable([i[arnname] for i in client.get_paginator(command).paginate(**args)])
+        
 class EventSender(Thread):
     def __init__(self,seto):
         super(EventSender, self).__init__()
@@ -126,30 +132,30 @@ class EventSender(Thread):
         al = []
         vers = {}
         inst = {}
-        for c in chain.from_iterable(page['clusterArns'] for page in client.get_paginator('list_clusters').paginate()):
-            if args.cluster and re.search(args.cluster,c.split("/",1)[1]) is None:
+        for c in boit('clusterArns','list_clusters'):
+            if args.cluster and re.search(args.cluster,cl(c)) is None:
                 continue
-            al.append(c.split("/",1)[1])
+            al.append(cl(c))
             self.insert(al,False,False)
             inst[c]=[]
             vers[c]={}
             if args.ec2:
-                for b in chain.from_iterable([i['serviceArns'] for i in client.get_paginator('list_services').paginate(cluster=c)]):
-                    al.append(b.split("/",1)[1])
+                for b in boit('serviceArns','list_services',cluster=c):
+                    al.append(cl(b))
                     self.insert(al,False,False)
-                    for l in chain.from_iterable([i['taskArns'] for i in client.get_paginator('list_tasks').paginate(cluster=c,serviceName=b)]):
-                        al.append(l.split("/",1)[1])
+                    for l in boit('taskArns','list_tasks',cluster=c,serviceName=b):
+                        al.append(cl(l))
                         vers[c][l]=copy.deepcopy(al)
                         self.insert(al,False,{"cluster":c,"taskarn":l})
                         al.pop()
                     al.pop()
             else:
-                for b in chain.from_iterable([i['containerInstanceArns'] for i in client.get_paginator('list_container_instances').paginate(cluster=c)]):
-                    al.append(b.split("/",1)[1])
+                for b in boit('containerInstanceArns','list_container_instances',cluster=c):
+                    al.append(cl(b))
                     inst[c].append(b)
                     self.insert(al,False,{"cluster":c,"containerInstance":b})
-                    for l in chain.from_iterable([i['taskArns'] for i in client.get_paginator('list_tasks').paginate(cluster=c,containerInstance=b)]):
-                        al.append(l.split("/",1)[1])
+                    for l in boit('taskArns','list_tasks',cluster=c,containerInstance=b):
+                        al.append(cl(l))
                         vers[c][l]=copy.deepcopy(al)
                         self.insert(al,False,{"cluster":c,"containerInstance":b})
                         al.pop()
@@ -158,14 +164,14 @@ class EventSender(Thread):
         for c,c_v in vers.items():
             for task in c_v.keys():
                 for t in client.describe_tasks(cluster = c, tasks = [task])['tasks']:
-                    self.update(vers[c][t['taskArn']]+[t['taskArn']],False,{"cluster":c,"containerInstance":t['containerInstanceArn']},t['taskDefinitionArn'].split("/",1)[1])
+                    self.update(vers[c][t['taskArn']]+[t['taskArn']],False,{"cluster":c,"containerInstance":t['containerInstanceArn']},cl(t['taskDefinitionArn']))
                     for ct in t['containers']:
-                        self.insert(vers[c][t['taskArn']]+[ct['name']],False,{"cluster":c,"containerInstance":t['containerInstanceArn'],"name":ct['name']})
+                        self.insert(vers[c][t['taskArn']]+[ct['name']],False,{"cluster":c,"containerInstance":t['containerInstanceArn'],"taskarn":ct['taskArn']})
         if not args.ec2:
             for c,c_i in inst.items():
                 for i in c_i:
                     for di in client.describe_container_instances(cluster = c, containerInstances = [i])['containerInstances']:
-                        self.update([c.split("/",1)[1],i.split("/",1)[1]],False,{"instance":di['ec2InstanceId']},di['ec2InstanceId'])
+                        self.update([cl(c),cl(i)],False,{"instance":di['ec2InstanceId']},di['ec2InstanceId'])
 
 
 
