@@ -1,14 +1,17 @@
-#!/usr/bin/python
+#!/usr/bin/env python3
 import npyscreen,subprocess,json,os,sys,boto3,time,copy,argparse,re
 from threading import Thread
 from itertools import chain,islice
 
 def ip(item):
+    npyscreen.notify("Resolving TaskArn", title='Please Wait', form_color='DEFAULT', wide=True)
     if "taskarn" in item:
         item["containerInstance"]=client.describe_tasks(cluster = item["cluster"], tasks = [item["taskarn"]])['tasks'][0]['containerInstanceArn']
+    npyscreen.notify("Resolving ContainerInstance", title='Please Wait', form_color='DEFAULT', wide=True)
     if "containerInstance" in item:
         item["instance"] = client.describe_container_instances(cluster = item["cluster"], containerInstances = [item["containerInstance"]])['containerInstances'][0]['ec2InstanceId']
-    if "instance" in item:        
+    npyscreen.notify("Resolving PrivateIpAddress", title='Please Wait', form_color='DEFAULT', wide=True)
+    if "instance" in item:
         return str(ec2.describe_instances(InstanceIds=[item["instance"]])['Reservations'][0]['Instances'][0]['PrivateIpAddress'])
     else:
         return str(item)
@@ -78,7 +81,7 @@ class BaseTreeForm(npyscreen.FormBaseNew):
             children = []
             for i in tree._children:
                 if i.content == value:
-                    if len(hier) == 1:
+                    if len(hier) == 0:
                         i.operation = False
                         i.content = replace
                         i.address = address
@@ -140,7 +143,7 @@ class EventSender(Thread):
             inst[c]=[]
             vers[c]={}
             if args.ec2:
-                for b in boit('serviceArns','list_services',cluster=c):
+                for b in boit('serviceArns','list_services',cluster=c):                    
                     al.append(cl(b))
                     self.insert(al,False,False)
                     for l in boit('taskArns','list_tasks',cluster=c,serviceName=b):
@@ -164,9 +167,17 @@ class EventSender(Thread):
         for c,c_v in vers.items():
             for task in c_v.keys():
                 for t in client.describe_tasks(cluster = c, tasks = [task])['tasks']:
-                    self.update(vers[c][t['taskArn']]+[t['taskArn']],False,{"cluster":c,"containerInstance":t['containerInstanceArn']},cl(t['taskDefinitionArn']))
-                    for ct in t['containers']:
-                        self.insert(vers[c][t['taskArn']]+[ct['name']],False,{"cluster":c,"containerInstance":t['containerInstanceArn'],"taskarn":ct['taskArn']})
+                    self.update(vers[c][t['taskArn']],False,{"cluster":c,"containerInstance":t['containerInstanceArn']},cl(t['taskDefinitionArn']))
+                    for i, ct in enumerate(t['containers']):
+                        taddr = vers[c][t['taskArn']]
+                        if args.no_show_tasks:                            
+                            if i==0:
+                                self.update(taddr[:-1]+[cl(task)], False, {"cluster":c,"containerInstance":t['containerInstanceArn'], "taskarn":ct['taskArn']},ct['name'])
+                                continue
+                            taddr = taddr[:-1]+[ct['name']]
+                        else:
+                            taddr = taddr+[ct['name']]
+                        self.insert(taddr, False, {"cluster":c,"containerInstance":t['containerInstanceArn'], "taskarn":ct['taskArn']})
         if not args.ec2:
             for c,c_i in inst.items():
                 for i in c_i:
@@ -184,9 +195,10 @@ def main():
        parser.add_argument("-r", "--region", type=str, help="aws region")
        parser.add_argument("-p", "--profile", type=str, help="aws profile")
        parser.add_argument("-e", "--ec2", help="show ec2 instances", action="store_false")
-       parser.add_argument("-t", "--no-show-tasks", help="don't show tasks in branches", action="store_true")
-       parser.add_argument("-s", "--no-show-services", help="don't show services in clusters", action="store_true")
-       parser.add_argument("-i", "--no-show-instances", help="don't show instances in clusters", action="store_true")
+       parser.add_argument("-t", "--no_show_tasks", help="don't show tasks in branches (on by default)", action="store_false")
+       parser.add_argument("-s", "--no_show_services", help="don't show services in clusters", action="store_true")
+       parser.add_argument("-i", "--no_show_instances", help="don't show instances in clusters", action="store_true")
+       
        global args
        global client
        global ec2
