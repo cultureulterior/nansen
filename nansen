@@ -2,11 +2,14 @@
 import npyscreen,subprocess,json,os,sys,boto3,time,copy,argparse,re
 from threading import Thread
 from itertools import chain,islice
+import webbrowser
 
 def ip(item):
     npyscreen.notify("Resolving TaskArn", title='Please Wait', form_color='DEFAULT', wide=True)
     if "taskarn" in item:
-        item["containerInstance"]=client.describe_tasks(cluster = item["cluster"], tasks = [item["taskarn"]])['tasks'][0]['containerInstanceArn']
+        tasks = client.describe_tasks(cluster = item["cluster"], tasks = [item["taskarn"]])['tasks']
+        item["containerInstance"] = tasks[0]['containerInstanceArn']
+        item["hostPort"] = tasks[0]['containers'][0]['networkBindings'][0]['hostPort']
     npyscreen.notify("Resolving ContainerInstance", title='Please Wait', form_color='DEFAULT', wide=True)
     if "containerInstance" in item:
         item["instance"] = client.describe_container_instances(cluster = item["cluster"], containerInstances = [item["containerInstance"]])['containerInstances'][0]['ec2InstanceId']
@@ -22,6 +25,12 @@ def container(item):
     else:
         return None
 
+def port(item):
+    if "hostPort" in item:
+        return item["hostPort"]
+    else:
+        return None
+
 class ContainerTree(npyscreen.MLTree):
     def handle_mouse_event(self,m):
         self.never_cache=True
@@ -34,6 +43,11 @@ class ContainerTree(npyscreen.MLTree):
         item = self.values[self.cursor_line]
         if not item.address:
             return
+        if args.browser:
+           ipa = ip(item.address)
+           porta = port(item.address)
+           webbrowser.open_new("http://"+ipa+":"+str(porta))
+           return
         global execl
         if os.getenv('SSH_OPTS'):
             ssh_opts = [i for i in os.getenv('SSH_OPTS', "").split(" ") if len(i)>0]
@@ -195,10 +209,11 @@ def main():
        parser.add_argument("-r", "--region", type=str, help="aws region")
        parser.add_argument("-p", "--profile", type=str, help="aws profile")
        parser.add_argument("-e", "--ec2", help="show ec2 instances", action="store_false")
+       parser.add_argument("-b", "--browser", help="open browser", action="store_true")
        parser.add_argument("-t", "--no_show_tasks", help="don't show tasks in branches (on by default)", action="store_false")
        parser.add_argument("-s", "--no_show_services", help="don't show services in clusters", action="store_true")
        parser.add_argument("-i", "--no_show_instances", help="don't show instances in clusters", action="store_true")
-       
+
        global args
        global client
        global ec2
