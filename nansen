@@ -9,8 +9,8 @@ def ip(item):
     if "taskarn" in item:
         tasks = client.describe_tasks(cluster = item["cluster"], tasks = [item["taskarn"]])['tasks']
         item["containerInstance"] = tasks[0]['containerInstanceArn']
-        item["hostPort"] = tasks[0]['containers'][0]['networkBindings'][0]['hostPort']
-    npyscreen.notify("Resolving ContainerInstance", title='Please Wait', form_color='DEFAULT', wide=True)
+        item["hostPort"] = [i for i in tasks[0]['containers'] if i['containerArn']==item['containerarn']][0]['networkBindings'][0]['hostPort']
+        npyscreen.notify("Resolving ContainerInstance", title='Please Wait', form_color='DEFAULT', wide=True)
     if "containerInstance" in item:
         item["instance"] = client.describe_container_instances(cluster = item["cluster"], containerInstances = [item["containerInstance"]])['containerInstances'][0]['ec2InstanceId']
     npyscreen.notify("Resolving PrivateIpAddress", title='Please Wait', form_color='DEFAULT', wide=True)
@@ -186,12 +186,12 @@ class EventSender(Thread):
                         taddr = vers[c][t['taskArn']]
                         if args.no_show_tasks:                            
                             if i==0:
-                                self.update(taddr[:-1]+[cl(task)], False, {"cluster":c,"containerInstance":t['containerInstanceArn'], "taskarn":ct['taskArn']},ct['name'])
+                                self.update(taddr[:-1]+[cl(task)], False, {"cluster":c,"containerInstance":t['containerInstanceArn'], "taskarn":ct['taskArn'], "containerarn": ct['containerArn']},ct['name'])
                                 continue
                             taddr = taddr[:-1]+[ct['name']]
                         else:
                             taddr = taddr+[ct['name']]
-                        self.insert(taddr, False, {"cluster":c,"containerInstance":t['containerInstanceArn'], "taskarn":ct['taskArn']})
+                        self.insert(taddr, False, {"cluster":c,"containerInstance":t['containerInstanceArn'], "taskarn":ct['taskArn'], "containerarn": ct['containerArn']})
         if not args.ec2:
             for c,c_i in inst.items():
                 for i in c_i:
